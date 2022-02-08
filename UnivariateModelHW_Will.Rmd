@@ -1,0 +1,211 @@
+---
+layout: page
+output: word_document
+---
+
+## Univariate Assignment
+
+Read in tree data
+
+
+```{r}
+# read in directly from website: 
+trees <- read.csv('https://raw.githubusercontent.com/dmcglinn/quant_methods/gh-pages/data/treedata_subset.csv')
+```
+
+Examine this dataset and see how the data is structured, see function `str` 
+
+The contents of the metadata file ([`./data/tree_metadata.txt`](https://raw.githubusercontent.com/dmcglinn/quant_methods/gh-pages/data/tree_metadata.txt)) is provided here:
+
+
+The dataset includes tree abundances from a subset of a vegetation database of Great Smoky Mountains National Park (TN, NC).
+
+* plotID: unique code for each spatial unit (note some sampled more than once)
+* date: when species occurrence recorded
+* plotsize: size of quadrat in m2
+* spcode: unique 7-letter code for each species
+* species: species name
+* cover: local abundance measured as estimated horizontal cover (ie, relative area of shadow if sun is directly above) classes 1-10 are: 1=trace, 2=0-1%, 3=1-2%, 4=2-5%, 5=5-10%, 6=10-25%, 7=25-50%, 8=50-75%, 9=75-95%, 10=95-100%
+* utme: plot UTM Easting, zone 17 (NAD27 Datum)
+* utmn: plot UTM Northing, zone 17 (NAD27 Datum)
+* elev: elevation in meters from a digital elevation model (10 m res)
+* tci: topographic convergence index, or site "water potential"; measured as the upslope contributing area divided by the tangent of the slope angle (Beven and Kirkby 1979)
+* streamdist: distance of plot from the nearest permanent stream (meters)
+* disturb: plot disturbance history (from a Park report); CORPLOG=corporate logging; SETTLE=concentrated settlement, VIRGIN="high in virgin attributes", LT-SEL=light or selective logging
+* beers: transformed slope aspect ('heat load index'); 0 is SW (hottest), 2 is NE (coolest)
+
+
+Above shows a map of the regional and local location of the elevational transects included in the dataset (from [Fridley 2009](http://plantecology.syr.edu/fridley/Fridley2009_jamc.pdf)).
+
+
+1\. Carry out an exploratory analysis using the tree dataset. Metadata for the
+tree study can be found [here](../data/tree_metadata.txt). Specifically, I would
+like you to develop and compare models for species cover for a habitat
+generalist [*Acer rubrum* (Red
+maple)](http://www.durhamtownship.com/blog-archives/pix/November1407.jpg) and a
+habitat specialist [*Abies fraseri* (Frasier
+fir)](https://upload.wikimedia.org/wikipedia/commons/d/d0/Abies_fraseri_Mitchell.jpg).
+
+Restructure and subset the data using the following R code: 
+
+```{r}  
+# we wish to model species cover across all sampled plots
+# create site x sp matrix for two species 
+sp_cov <- with(trees, tapply(cover, list(plotID, spcode), 
+                           function(x) round(mean(x))))
+sp_cov <- ifelse(is.na(sp_cov), 0, sp_cov)
+sp_cov <- data.frame(plotID = row.names(sp_cov), sp_cov)
+# create environmental matrix
+cols_to_select <- c('elev', 'tci', 'streamdist', 'disturb', 'beers')
+env <- aggregate(trees[ , cols_to_select], by = list(trees$plotID), 
+                function(x) x[1])
+names(env)[1] = 'plotID'
+# merge species and enviornmental matrices
+site_dat <- merge(sp_cov, env, by='plotID')
+# subset species of interest
+abies <- site_dat[ , c('ABIEFRA', cols_to_select)]
+acer  <- site_dat[ , c('ACERRUB', cols_to_select)]
+names(abies)[1] <- 'cover'
+names(acer)[1] <- 'cover'
+```
+
+Visualize the data:
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+AbiesFraseri<-trees %>% filter(species=='Abies fraseri')
+AcerRubrum<-trees %>% filter(species=='Acer rubrum')
+BothSpecies<-rbind(AbiesFraseri,AcerRubrum)
+#ggplot(BothSpecies, aes(x=cover, y=elev))+
+  #geom_point(data=BothSpecies, aes(x=cover, y=elev, color=species))+
+  #geom_smooth(data=BothSpecies, aes(linetype=species, color=species), method=lm, fullrange=TRUE)
+AbiesFraseri_plot<-ggplot(AbiesFraseri, aes(x=elev, y=cover))+
+  geom_point(data=AbiesFraseri, aes(x=elev, y=cover), color='blue')+
+  geom_smooth(data=AbiesFraseri, aes(linetype=species), method=lm, fullrange=TRUE, se=FALSE, color='black')+
+  theme(legend.position="none")+
+  xlab("Elevation")+
+  ylab("Abies fraseri Cover")
+AcerRubrum_plot<-ggplot(AcerRubrum, aes(x=elev, y=cover))+
+  geom_point(data=AcerRubrum, aes(x=elev, y=cover), color='red')+
+  geom_smooth(data=AcerRubrum, aes(linetype=species), method=lm, fullrange=TRUE, se=FALSE, color='black')+
+  theme(legend.position="none")+
+  xlab("Elevation")+
+  ylab("Acer rubrum Cover")
+SpecElev_plot<-ggplot(BothSpecies, aes(x=species,y=elev))+
+  geom_boxplot()+
+  ylab("Elevation")
+print(SpecElev_plot)
+grid.arrange(AbiesFraseri_plot,AcerRubrum_plot, ncol=2)
+```
+The slopes for each species appear different in the above graph, so and Interaction effect model will be used (the species being evaluated seems to influence the variation in cover with elevation)
+
+Create and evaluate model:
+
+```{r}
+trees_int_mod <- lm(cover ~ species + elev + species:elev,
+              data = BothSpecies)
+summary(trees_int_mod)
+summary(aov(trees_int_mod))
+library(car)
+Anova(trees_int_mod, type=3)
+```
+*Compare the p-values you observe using the function `Anova` to those generated
+using `summary`.
+
+The p-values generated by the Anova function and the summary function are the same. They both show significant variation between species (p=5.3* 10^-7), with elevation (p=3.4* 10^-7), and between species and elevation (p=8.1* 10^-8). 
+
+*For each species address the following additional questions:
+
+* how well does the exploratory model appear to explain cover?
+```{r}
+abies_int_mod <- lm(cover ~ elev, data=abies)
+Anova(abies_int_mod, type=3)
+acer_int_mod <- lm(cover ~ elev, data=acer)
+Anova(acer_int_mod, type=3)
+```
+Each model produces a significant result (p = <2.2*10^-16), indicating that within each species, elevation has a significant effect on cover.
+
+* which explanatory variables are the most important?
+```{r}
+abies_int_mod <- lm(cover ~ elev + tci + streamdist + disturb + beers, data=abies)
+Anova(abies_int_mod, type=3)
+acer_int_mod <- lm(cover ~ elev + tci + streamdist + disturb + beers, data=acer)
+Anova(acer_int_mod, type=3)
+```
+For Abies (habitat specialist), elevation has the greatest effect on cover (p = <2.2* 10^-16), followed by disturbance level (p = 3.5* 10^-7) and distance from streams (p = 0.03). For Acer (habitat generalist), elevation also has the greatest effect on cover (p = <2.2*10^-16), followed by site water potential (tci, p = 0.003) and heat load index (beers, p = 0.003).
+
+* do model diagnostics indicate any problems with violations of OLS assumptions?
+```{r}
+par(mfrow = c(2,2))
+plot(abies_int_mod)
+par(mfrow = c(2,2))
+plot(acer_int_mod)
+```
+Based on the above plots, the Abies model violates assumptions of normality (top right graph deviates from linear arrangement) and homoscedasticity (top left and bottom left graphs have noticeable patterns). The bottom right plot also suggests influence of outliers. For the Acer model, assumption of normality holds and no large effect due to outliers. The homoscedasticity graphs are more spread out as compared to the Abies plots, but patters are still visible, so assumption of homoscedasticity is questionable. Overall, the Acer model holds to the assumptions more than the Abies model (there are far more acer samples in the dataset than abies samples, which may explain some of this).
+
+* are you able to explain variance in one species better than another, 
+  why might this be the case?
+```{r}
+nrow(subset(trees, species=="Abies fraseri"))
+nrow(subset(trees, species=="Acer rubrum"))
+```
+I believe the discrepancy in sample size is the most likely culprit. There are only 44 samples for Abies fraseri (the model for which violated most assumptions), while there are 723 samples for Acer rubrum.
+
+2\. You may have noticed that the variable cover is defined as 
+positive integers between 1 and 10. and is therefore better treated
+as a discrete rather than continuous variable. 
+Re-examine your solutions to the questions above but from the
+perspective of a General Linear Model (GLM) with a Poisson error term
+(rather than a Gaussian one as in OLS). 
+The Poisson distribution generates integers 0 to positive infinity so this may provide a good first approximation. 
+Your new model calls will look as follows:
+
+```{r}
+acer_poi <- glm(cover ~ elev + tci + streamdist + disturb + beers, data = acer, 
+           family='poisson')
+Anova(acer_poi, type=3)
+abies_poi <- glm(cover ~ elev + tci + streamdist + disturb + beers, data = abies, 
+           family='poisson')
+Anova(abies_poi, type=3)
+```
+
+* which explanatory variables are the most important?
+
+For Acer (habitat generalist), elevation has the greatest effect on cover (p = <2.2* 10^-16), followed by site water potential (tci, p = 0.0001), heat load index (beers, p = 0.0005), and disturbance level (p = 0.005). For Abies (habitat specialist), elevation also has the greatest effect on cover (p = <2.2* 10^-16), followed by disturbance level (p = 6.9* 10^-5), distance from stream (p = 0.006), and site water potential (tci, p = 0.007).
+
+* do model diagnostics indicate any problems with violations of OLS assumptions?
+```{r}
+par(mfrow = c(2,2))
+plot(abies_poi)
+par(mfrow = c(2,2))
+plot(acer_poi)
+```
+The assumption violations are similar to those seen in the original models, with Abies breaking most assumptions, while Acer holds true to most assumptions.
+
+* are you able to explain variance in one species better than another, 
+  why might this be the case?
+
+The number of Abies samples is still rather low in this new model, so I would still say this is the cause for some of the assumption issues.
+
+For assessing the degree of variation explained you can use a 
+pseudo-R-squared statistic (note this is just one of many possible)
+
+```{r}
+pseudo_r2 <- function(glm_mod) {
+                1 -  glm_mod$deviance / glm_mod$null.deviance
+}
+pseudo_r2(acer_poi)
+pseudo_r2(abies_poi)
+```
+
+Compare your qualatitive assessment of which variables were most important in each model. 
+Does it appear that changing the error distribution changed the results much? In what ways? 
+
+The levels of significance are more extreme in the glm models (significance is greater for variables in common, and some variables became significant in the glam model). This follows the difference between a gaussian (lm) and poisson (glm) distribution, where the poisson distribution is slightly more skewed right.
+
+3\. Provide a plain English summary (i.e., no statistics) of what you have
+found and what conclusions we can take away from your analysis?
+
+Based on this data, elevation has a significant influence on cover for both species. In addition to elevation, Acer (habitat generalist) cover is influenced by site water potential, heat load index, and disturbance level, while Abies (habitat specialiest) cover is influenced by disturbance level, distance from stream, and site water potential. However, it is important to note that the Abies models did not meet the necessary assumptions. This is most likely due to the small number of Abies samples in the data set, as compared to the number of Acer samples.
